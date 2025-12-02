@@ -14,6 +14,16 @@ Outil centralisé, modulaire et sécurisé pour superviser et automatiser des d�
 
 Prérequis: Python 3.11+, Node 18+
 
+- Debian/Ubuntu (prérequis rapides):
+```bash
+sudo apt update
+# venv pour Python (selon version installée)
+sudo apt install -y python3-venv
+# ou si votre Python est 3.12: sudo apt install -y python3.12-venv
+# Node.js + npm (paquets distro; pour LTS récent, voir NodeSource)
+sudo apt install -y nodejs npm
+```
+
 - Lancer le Stack (Server + UI ensemble):
 ```bash
 chmod +x scripts/run-stack.sh
