@@ -1,0 +1,18 @@
+[Unit]
+Description=GitOps Orchestrator Stack (Server + UI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=orchestrator
+Group=orchestrator
+WorkingDirectory=/opt/orchestrator
+Environment=PYTHONUNBUFFERED=1
+Environment=SERVER_PSK=changeme
+ExecStart=/bin/bash scripts/run-stack.sh
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

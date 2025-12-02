@@ -1,0 +1,20 @@
+[Unit]
+Description=GitOps Orchestrator Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=orchestrator
+Group=orchestrator
+# Change to your deployment path
+WorkingDirectory=/opt/orchestrator
+Environment=PYTHONUNBUFFERED=1
+# Point to your agent config path
+Environment=AGENT_CONFIG=/etc/orchestrator-agent/config.yaml
+ExecStart=/bin/bash scripts/run-agent.sh
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

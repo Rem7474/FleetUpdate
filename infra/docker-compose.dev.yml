@@ -1,0 +1,29 @@
+version: "3.9"
+services:
+  server:
+    image: python:3.11-slim
+    working_dir: /app
+    volumes:
+      - ../server:/app
+      - server_db:/data
+    environment:
+      - DATABASE_URL=sqlite:////data/db.sqlite3
+      - SERVER_PSK=changeme
+      - CORS_ORIGINS=http://localhost:5173
+    command: bash -lc "pip install --no-cache-dir -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8000:8000"
+  ui:
+    image: node:18-alpine
+    working_dir: /app
+    volumes:
+      - ../ui:/app
+    environment:
+      - PORT=5173
+    command: sh -lc "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    depends_on:
+      - server
+volumes:
+  server_db:

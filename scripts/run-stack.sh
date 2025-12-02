@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+pids=()
+
+cleanup() {
+  trap - INT TERM EXIT
+  for pid in "${pids[@]:-}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
+  wait || true
+}
+trap cleanup INT TERM EXIT
+
+/bin/bash scripts/run-server.sh &
+pids+=($!)
+/bin/bash scripts/run-ui.sh &
+pids+=($!)
+
+# Wait until one exits, then cleanup
+wait -n || true
+exit 0

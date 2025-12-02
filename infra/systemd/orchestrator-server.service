@@ -1,0 +1,20 @@
+[Unit]
+Description=GitOps Orchestrator Server (FastAPI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=orchestrator
+Group=orchestrator
+# Change to your deployment path
+WorkingDirectory=/opt/orchestrator
+Environment=PYTHONUNBUFFERED=1
+# Set a strong PSK for production
+Environment=SERVER_PSK=changeme
+ExecStart=/bin/bash scripts/run-server.sh
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

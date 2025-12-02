@@ -1,0 +1,4 @@
+pyyaml
+httpx
+pydantic>=2
+cryptography
