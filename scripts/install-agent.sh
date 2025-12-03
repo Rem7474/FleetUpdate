@@ -7,7 +7,9 @@ set -euo pipefail
 # - Creates /etc/orchestrator-agent/config.yaml (can patch via env vars)
 # - Installs systemd agent service and starts it
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# Use the directory from which the script is launched as the repo root.
+# You can override via REPO_DIR_OVERRIDE=/path/to/repo
+REPO_DIR="${REPO_DIR_OVERRIDE:-$(pwd -P)}"
 APP_USER="orchestrator"
 APP_GROUP="orchestrator"
 APP_HOME="/opt/orchestrator"
@@ -52,9 +54,25 @@ ensure_user() {
 }
 
 deploy_repo() {
-  echo "Deploying repository to $APP_HOME ..."
+  echo "Deploying repository from $REPO_DIR to $APP_HOME ..."
   mkdir -p "$APP_HOME"
-  rsync -a --delete "$REPO_DIR/" "$APP_HOME/"
+  # Safety checks to avoid syncing from '/'
+  if [ -z "$REPO_DIR" ] || [ "$REPO_DIR" = "/" ]; then
+    echo "Safety check failed: REPO_DIR='$REPO_DIR' looks invalid. Run this script from your repo root." >&2
+    exit 1
+  fi
+  if [ ! -d "$REPO_DIR/scripts" ] || [ ! -f "$REPO_DIR/README.md" ]; then
+    echo "REPO_DIR '$REPO_DIR' doesn't look like the FleetUpdate repo (missing scripts/ or README.md)." >&2
+    echo "Run the installer from the repo root, or set REPO_DIR_OVERRIDE to the repo path." >&2
+    exit 1
+  fi
+  rsync -a --delete \
+    --exclude ".git/" \
+    --exclude "server/.venv/" \
+    --exclude "agent/.venv/" \
+    --exclude "ui/node_modules/" \
+    --exclude "ui/dist/" \
+    "$REPO_DIR/" "$APP_HOME/"
   chown -R "$APP_USER:$APP_GROUP" "$APP_HOME"
 }
 
