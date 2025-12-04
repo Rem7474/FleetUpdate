@@ -51,12 +51,30 @@ deploy_repo() {
   mkdir -p "$APP_HOME"
   if [ -d "$APP_HOME/.git" ]; then
     echo "Repo exists in $APP_HOME, pulling latest..."
-    git -C "$APP_HOME" fetch --all --quiet >/dev/null 2>&1 || true
-    # Determine default branch (main or master)
-    DEFAULT_BRANCH=$(git -C "$APP_HOME" remote show origin 2>/dev/null | awk '/HEAD branch/ {print $NF}')
-    DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
-    git -C "$APP_HOME" checkout "$DEFAULT_BRANCH" >/dev/null 2>&1 || true
-    git -C "$APP_HOME" reset --hard "origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || git -C "$APP_HOME" pull --ff-only origin "$DEFAULT_BRANCH" >/dev/null 2>&1 || true
+    if ! git -C "$APP_HOME" fetch --all --quiet >/dev/null 2>&1; then
+      echo "Warning: git fetch failed; attempting full reclone..." >&2
+      rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
+      git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || {
+        echo "Error: git clone failed" >&2; exit 1; }
+    else
+      # Determine default branch (main or master)
+      DEFAULT_BRANCH=$(git -C "$APP_HOME" remote show origin 2>/dev/null | awk '/HEAD branch/ {print $NF}')
+      DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
+      # Ensure branch exists locally; if not, create tracking branch
+      if ! git -C "$APP_HOME" rev-parse --verify "$DEFAULT_BRANCH" >/dev/null 2>&1; then
+        git -C "$APP_HOME" checkout -b "$DEFAULT_BRANCH" "origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || true
+      else
+        git -C "$APP_HOME" checkout "$DEFAULT_BRANCH" >/dev/null 2>&1 || true
+      fi
+      # Hard reset to origin, fallback to pull
+      git -C "$APP_HOME" reset --hard "origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || \
+      git -C "$APP_HOME" pull --ff-only origin "$DEFAULT_BRANCH" >/dev/null 2>&1 || {
+        echo "Warning: git reset/pull failed; attempting reclone..." >&2
+        rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
+        git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || {
+          echo "Error: git clone failed" >&2; exit 1; }
+      }
+    fi
   else
     rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
     git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1

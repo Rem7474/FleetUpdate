@@ -59,8 +59,27 @@ deploy_repo() {
   mkdir -p "$APP_HOME"
   if [ -d "$APP_HOME/.git" ]; then
     echo "Repo exists in $APP_HOME, pulling latest..."
-    git -C "$APP_HOME" fetch --all --quiet >/dev/null 2>&1 || true
-    git -C "$APP_HOME" reset --hard origin/main >/dev/null 2>&1 || git -C "$APP_HOME" pull --ff-only >/dev/null 2>&1 || true
+    if ! git -C "$APP_HOME" fetch --all --quiet >/dev/null 2>&1; then
+      echo "Warning: git fetch failed; attempting full reclone..." >&2
+      rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
+      git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || {
+        echo "Error: git clone failed" >&2; exit 1; }
+    else
+      DEFAULT_BRANCH=$(git -C "$APP_HOME" remote show origin 2>/dev/null | awk '/HEAD branch/ {print $NF}')
+      DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
+      if ! git -C "$APP_HOME" rev-parse --verify "$DEFAULT_BRANCH" >/dev/null 2>&1; then
+        git -C "$APP_HOME" checkout -b "$DEFAULT_BRANCH" "origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || true
+      else
+        git -C "$APP_HOME" checkout "$DEFAULT_BRANCH" >/dev/null 2>&1 || true
+      fi
+      git -C "$APP_HOME" reset --hard "origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || \
+      git -C "$APP_HOME" pull --ff-only origin "$DEFAULT_BRANCH" >/dev/null 2>&1 || {
+        echo "Warning: git reset/pull failed; attempting reclone..." >&2
+        rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
+        git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || {
+          echo "Error: git clone failed" >&2; exit 1; }
+      }
+    fi
   else
     rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
     git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1
@@ -100,15 +119,14 @@ enable_and_start() {
 }
 
 print_summary() {
-  echo "\nAgent installation complete. Summary:"
-  echo "  App home:        $APP_HOME"
-  echo "  Service user:    $APP_USER"
-  echo "  Agent config:    $AGENT_CONF_PATH"
-  echo "  Service:         orchestrator-agent"
-  echo
-  echo "Check status/logs:"
-  echo "  systemctl status orchestrator-agent"
-  echo "  journalctl -u orchestrator-agent -f"
+  printf "\nAgent installation complete. Summary:\n"
+  printf "  App home:        %s\n" "$APP_HOME"
+  printf "  Service user:    %s\n" "$APP_USER"
+  printf "  Agent config:    %s\n" "$AGENT_CONF_PATH"
+  printf "  Service:         orchestrator-agent\n\n"
+  printf "Check status/logs:\n"
+  printf "  systemctl status orchestrator-agent\n"
+  printf "  journalctl -u orchestrator-agent -f\n"
 }
 
 main() {
