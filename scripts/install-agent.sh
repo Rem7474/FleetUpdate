@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Agent-only installer for Debian/Ubuntu-like systems.
 # - Creates service user and deploys repo to /opt/orchestrator
-# - Installs prerequisites (python3-venv, rsync, git)
+# - Installs prerequisites (python3-venv, rsync, git, curl)
 # - Creates /etc/orchestrator-agent/config.yaml (can patch via env vars)
 # - Installs systemd agent service and starts it
 
@@ -35,8 +35,8 @@ install_prereqs() {
   if have_cmd apt-get; then
     echo "Installing prerequisites with apt-get..."
     apt-get update -y >/dev/null 2>&1 || apt-get update -y
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv rsync git ca-certificates >/dev/null 2>&1 || \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv rsync git ca-certificates
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv rsync git curl ca-certificates >/dev/null 2>&1 || \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv rsync git curl ca-certificates
     # If Python is 3.12 and ensurepip missing, try python3.12-venv
     if have_cmd python3 && ! python3 -c 'import ensurepip' >/dev/null 2>&1; then
       DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3.12-venv >/dev/null 2>&1 || apt-get install -y python3.12-venv || true
@@ -49,21 +49,26 @@ install_prereqs() {
 ensure_user() {
   if ! id -u "$APP_USER" >/dev/null 2>&1; then
     useradd --system --create-home --home-dir "$APP_HOME" --shell /usr/sbin/nologin "$APP_USER" >/dev/null 2>&1 || true
+  tarball_fallback() {
+    local branch="$1"
+    local url="https://codeload.github.com/Rem7474/FleetUpdate/tar.gz/refs/heads/$branch"
+    echo "Falling back to tarball download ($branch)..."
+    rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
+    mkdir -p "$APP_HOME"
+    if curl -fsSL "$url" | tar -xz -C "$APP_HOME" --strip-components=1 >/dev/null 2>&1; then
+      return 0
+    else
+      return 1
+    fi
+  }
   fi
   mkdir -p "$APP_HOME"
-  chown -R "$APP_USER:$APP_GROUP" "$APP_HOME" >/dev/null 2>&1 || true
-}
-
-deploy_repo() {
-  echo "Deploying repository from $REPO_URL to $APP_HOME ..."
-  mkdir -p "$APP_HOME"
-  if [ -d "$APP_HOME/.git" ]; then
-    echo "Repo exists in $APP_HOME, pulling latest..."
     if ! git -C "$APP_HOME" fetch --all --quiet >/dev/null 2>&1; then
       echo "Warning: git fetch failed; attempting full reclone..." >&2
       rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
-      git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || {
-        echo "Error: git clone failed" >&2; exit 1; }
+      if ! git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1; then
+        tarball_fallback main || tarball_fallback master || { echo "Error: repository download failed (git and tarball)" >&2; exit 1; }
+      fi
     else
       DEFAULT_BRANCH=$(git -C "$APP_HOME" remote show origin 2>/dev/null | awk '/HEAD branch/ {print $NF}')
       DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
@@ -72,9 +77,21 @@ deploy_repo() {
       else
         git -C "$APP_HOME" checkout "$DEFAULT_BRANCH" >/dev/null 2>&1 || true
       fi
+      if ! git -C "$APP_HOME" reset --hard "origin/$DEFAULT_BRANCH" >/dev/null 2>&1; then
+        if ! git -C "$APP_HOME" pull --ff-only origin "$DEFAULT_BRANCH" >/dev/null 2>&1; then
+          echo "Warning: git reset/pull failed; attempting reclone..." >&2
+          rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
+          if ! git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1; then
+            tarball_fallback "$DEFAULT_BRANCH" || tarball_fallback main || tarball_fallback master || { echo "Error: repository download failed (git and tarball)" >&2; exit 1; }
+          fi
+        fi
+      fi
+    fi
       git -C "$APP_HOME" reset --hard "origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || \
       git -C "$APP_HOME" pull --ff-only origin "$DEFAULT_BRANCH" >/dev/null 2>&1 || {
-        echo "Warning: git reset/pull failed; attempting reclone..." >&2
+    if ! git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1; then
+      tarball_fallback main || tarball_fallback master || { echo "Error: repository download failed (git and tarball)" >&2; exit 1; }
+    fi
         rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
         git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || {
           echo "Error: git clone failed" >&2; exit 1; }

@@ -3,7 +3,6 @@ import axios from 'axios'
 import { Badge, Button, Card, Input, List, Segmented, Space, Tag, Typography, message } from 'antd'
 import { Link } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
-import axios from 'axios'
 
 type Agent = { id: string; status: string; last_seen: string; os_update?: any; uptime_seconds?: number; outdated?: boolean }
 
