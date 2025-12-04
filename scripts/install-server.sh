@@ -93,7 +93,8 @@ EOF
 
 install_services() {
   echo "Installing systemd units ..."
-  cp "$APP_HOME/infra/systemd/orchestrator-"*.service "$SYSTEMD_DIR/" >/dev/null 2>&1
+  # Force update unit files
+  cp -f "$APP_HOME/infra/systemd/orchestrator-"*.service "$SYSTEMD_DIR/" >/dev/null 2>&1
 
   # Ensure server unit can load environment
   mkdir -p "$SYSTEMD_DIR/orchestrator-server.service.d"
@@ -103,11 +104,15 @@ EnvironmentFile=$APP_HOME/.env
 EOF
 
   systemctl daemon-reload >/dev/null 2>&1 || systemctl daemon-reload
+  # Ensure updated units are enabled
+  systemctl enable orchestrator-stack >/dev/null 2>&1 || true
+  systemctl enable orchestrator-server >/dev/null 2>&1 || true
+  systemctl enable orchestrator-ui >/dev/null 2>&1 || true
 }
 
 enable_and_start() {
   echo "Enabling and starting server stack ..."
-  systemctl enable orchestrator-stack >/dev/null 2>&1 || true
+  # Restart to pick up unit changes
   systemctl restart orchestrator-stack >/dev/null 2>&1 || systemctl start orchestrator-stack >/dev/null 2>&1
 }
 

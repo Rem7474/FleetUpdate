@@ -89,13 +89,13 @@ setup_agent_config() {
 
 install_services() {
   echo "Installing systemd unit for agent ..."
-  cp "$APP_HOME/infra/systemd/orchestrator-agent.service" "$SYSTEMD_DIR/" >/dev/null 2>&1
+  cp -f "$APP_HOME/infra/systemd/orchestrator-agent.service" "$SYSTEMD_DIR/" >/dev/null 2>&1
   systemctl daemon-reload >/dev/null 2>&1 || systemctl daemon-reload
+  systemctl enable orchestrator-agent >/dev/null 2>&1 || true
 }
 
 enable_and_start() {
   echo "Enabling and starting agent ..."
-  systemctl enable orchestrator-agent >/dev/null 2>&1 || true
   systemctl restart orchestrator-agent >/dev/null 2>&1 || systemctl start orchestrator-agent >/dev/null 2>&1
 }
 
