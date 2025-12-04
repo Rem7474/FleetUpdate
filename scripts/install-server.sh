@@ -3,13 +3,12 @@ set -euo pipefail
 
 # Server installer (server + UI) for Debian/Ubuntu-like systems.
 # - Creates service user and deploys repo to /opt/orchestrator
-# - Installs prerequisites (python3-venv, nodejs, npm, rsync)
+# - Installs prerequisites (python3-venv, nodejs, npm, rsync, git)
 # - Writes /opt/orchestrator/.env with a strong SERVER_PSK if missing
 # - Installs systemd services and starts orchestrator-stack
 
-# Use the directory from which the script is launched as the repo root.
-# You can override via REPO_DIR_OVERRIDE=/path/to/repo
-REPO_DIR="${REPO_DIR_OVERRIDE:-$(pwd -P)}"
+# Standalone installer: fetch repo directly to /opt/orchestrator using git
+REPO_URL="${REPO_URL_OVERRIDE:-https://github.com/Rem7474/FleetUpdate.git}"
 APP_USER="orchestrator"
 APP_GROUP="orchestrator"
 APP_HOME="/opt/orchestrator"
@@ -27,46 +26,38 @@ have_cmd() { command -v "$1" >/dev/null 2>&1; }
 install_prereqs() {
   if have_cmd apt-get; then
     echo "Installing prerequisites with apt-get..."
-    apt-get update -y
-    DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv nodejs npm rsync
+    apt-get update -y >/dev/null 2>&1 || apt-get update -y
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv nodejs npm rsync git ca-certificates >/dev/null 2>&1 || \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv nodejs npm rsync git ca-certificates
     # If Python is 3.12 and ensurepip missing, try python3.12-venv
     if have_cmd python3 && ! python3 -c 'import ensurepip' >/dev/null 2>&1; then
-      apt-get install -y python3.12-venv || true
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3.12-venv >/dev/null 2>&1 || apt-get install -y python3.12-venv || true
     fi
   else
-    echo "apt-get not found; please install Python venv, Node.js, npm, and rsync manually." >&2
+    echo "apt-get not found; please install Python venv, Node.js, npm, rsync, and git manually." >&2
   fi
 }
 
 ensure_user() {
   if ! id -u "$APP_USER" >/dev/null 2>&1; then
-    useradd --system --create-home --home-dir "$APP_HOME" --shell /usr/sbin/nologin "$APP_USER"
+    useradd --system --create-home --home-dir "$APP_HOME" --shell /usr/sbin/nologin "$APP_USER" >/dev/null 2>&1 || true
   fi
   mkdir -p "$APP_HOME"
-  chown -R "$APP_USER:$APP_GROUP" "$APP_HOME" || true
+  chown -R "$APP_USER:$APP_GROUP" "$APP_HOME" >/dev/null 2>&1 || true
 }
 
 deploy_repo() {
-  echo "Deploying repository from $REPO_DIR to $APP_HOME ..."
+  echo "Deploying repository from $REPO_URL to $APP_HOME ..."
   mkdir -p "$APP_HOME"
-  # Safety checks to avoid syncing from '/'
-  if [ -z "$REPO_DIR" ] || [ "$REPO_DIR" = "/" ]; then
-    echo "Safety check failed: REPO_DIR='$REPO_DIR' looks invalid. Run this script from your repo root." >&2
-    exit 1
+  if [ -d "$APP_HOME/.git" ]; then
+    echo "Repo exists in $APP_HOME, pulling latest..."
+    git -C "$APP_HOME" fetch --all --quiet >/dev/null 2>&1 || true
+    git -C "$APP_HOME" reset --hard origin/main >/dev/null 2>&1 || git -C "$APP_HOME" pull --ff-only >/dev/null 2>&1 || true
+  else
+    rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
+    git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1
   fi
-  if [ ! -d "$REPO_DIR/scripts" ] || [ ! -f "$REPO_DIR/README.md" ]; then
-    echo "REPO_DIR '$REPO_DIR' doesn't look like the FleetUpdate repo (missing scripts/ or README.md)." >&2
-    echo "Run the installer from the repo root, or set REPO_DIR_OVERRIDE to the repo path." >&2
-    exit 1
-  fi
-  rsync -a --delete \
-    --exclude ".git/" \
-    --exclude "server/.venv/" \
-    --exclude "agent/.venv/" \
-    --exclude "ui/node_modules/" \
-    --exclude "ui/dist/" \
-    "$REPO_DIR/" "$APP_HOME/"
-  chown -R "$APP_USER:$APP_GROUP" "$APP_HOME"
+  chown -R "$APP_USER:$APP_GROUP" "$APP_HOME" >/dev/null 2>&1 || true
 }
 
 write_env() {
@@ -92,8 +83,8 @@ UI_PASSWORD=
 JWT_SECRET=$(date +%s)-devsecret
 HOST=0.0.0.0
 EOF
-    chown "$APP_USER:$APP_GROUP" "$env_file"
-    chmod 600 "$env_file"
+    chown "$APP_USER:$APP_GROUP" "$env_file" >/dev/null 2>&1 || true
+    chmod 600 "$env_file" >/dev/null 2>&1 || true
     echo "Edit $env_file to set UI_USER/UI_PASSWORD before exposing the UI."
   else
     echo "$env_file already exists; leaving as-is."
@@ -102,7 +93,7 @@ EOF
 
 install_services() {
   echo "Installing systemd units ..."
-  cp "$APP_HOME/infra/systemd/orchestrator-"*.service "$SYSTEMD_DIR/"
+  cp "$APP_HOME/infra/systemd/orchestrator-"*.service "$SYSTEMD_DIR/" >/dev/null 2>&1
 
   # Ensure server unit can load environment
   mkdir -p "$SYSTEMD_DIR/orchestrator-server.service.d"
@@ -111,13 +102,13 @@ install_services() {
 EnvironmentFile=$APP_HOME/.env
 EOF
 
-  systemctl daemon-reload
+  systemctl daemon-reload >/dev/null 2>&1 || systemctl daemon-reload
 }
 
 enable_and_start() {
   echo "Enabling and starting server stack ..."
-  systemctl enable orchestrator-stack || true
-  systemctl restart orchestrator-stack || systemctl start orchestrator-stack
+  systemctl enable orchestrator-stack >/dev/null 2>&1 || true
+  systemctl restart orchestrator-stack >/dev/null 2>&1 || systemctl start orchestrator-stack >/dev/null 2>&1
 }
 
 print_summary() {

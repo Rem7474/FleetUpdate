@@ -72,16 +72,19 @@ Consultez `docs/ARCHITECTURE.md` et `docs/SECURITY.md` pour les détails.
 Pour automatiser l’installation, deux scripts sont fournis:
 - Serveur + UI (sur la machine serveur):
 ```bash
-sudo bash scripts/install-server.sh
+curl -fsSL https://raw.githubusercontent.com/Rem7474/FleetUpdate/main/scripts/install-server.sh -o install-server.sh
+chmod +x install-server.sh
+sudo ./install-server.sh
 ```
 - Agent seul (à lancer sur chaque VM agent):
 ```bash
+curl -fsSL https://raw.githubusercontent.com/Rem7474/FleetUpdate/main/scripts/install-agent.sh -o install-agent.sh
+chmod +x install-agent.sh
 # Variables optionnelles pour personnaliser la config agent
 export AGENT_ID=vm-01
 export SERVER_URL=http://<ip-serveur>:8000
 export AGENT_PSK=<psk-identique-au-serveur>
-
-sudo bash scripts/install-agent.sh
+sudo ./install-agent.sh
 ```
 Les installateurs créent l’utilisateur `orchestrator`, déploient le code sous `/opt/orchestrator`, installent les prérequis, configurent systemd et démarrent les services.
 
