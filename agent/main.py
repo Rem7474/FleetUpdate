@@ -6,7 +6,7 @@ import httpx
 import yaml
 from pydantic import BaseModel
 from heartbeat import collect_apps_state, collect_os_update_status
-from hmac import sign_bytes
+from crypto_hmac import sign_bytes
 
 
 class AgentSettings(BaseModel):

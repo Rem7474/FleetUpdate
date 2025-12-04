@@ -3,10 +3,12 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const allowedHosts = (env.ALLOWED_HOSTS || '')
+  const allowedHostsEnv = (env.ALLOWED_HOSTS || '')
     .split(',')
     .map((h) => h.trim())
     .filter(Boolean)
+  const defaultAllowed = ['localhost', '127.0.0.1', 'erpnext.remcorp.fr']
+  const allowedHosts = Array.from(new Set([...defaultAllowed, ...allowedHostsEnv]))
 
   return {
     plugins: [react()],
@@ -14,7 +16,7 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       strictPort: true,
       host: true,
-      allowedHosts: allowedHosts.length > 0 ? allowedHosts : ['erpnext.remcorp.fr'],
+      allowedHosts,
       proxy: {
         '/api': {
           target: 'http://localhost:8000',
