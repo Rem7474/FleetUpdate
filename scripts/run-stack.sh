@@ -4,6 +4,12 @@ cd "$(dirname "$0")/.."
 
 if [ -f ./.env ]; then set -a; . ./.env; set +a; fi
 
+# Prevent port conflicts: stop any running systemd services for UI/Server
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl stop orchestrator-ui >/dev/null 2>&1 || true
+  systemctl stop orchestrator-server >/dev/null 2>&1 || true
+fi
+
 pids=()
 
 cleanup() {

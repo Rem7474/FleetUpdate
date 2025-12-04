@@ -52,7 +52,11 @@ deploy_repo() {
   if [ -d "$APP_HOME/.git" ]; then
     echo "Repo exists in $APP_HOME, pulling latest..."
     git -C "$APP_HOME" fetch --all --quiet >/dev/null 2>&1 || true
-    git -C "$APP_HOME" reset --hard origin/main >/dev/null 2>&1 || git -C "$APP_HOME" pull --ff-only >/dev/null 2>&1 || true
+    # Determine default branch (main or master)
+    DEFAULT_BRANCH=$(git -C "$APP_HOME" remote show origin 2>/dev/null | awk '/HEAD branch/ {print $NF}')
+    DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
+    git -C "$APP_HOME" checkout "$DEFAULT_BRANCH" >/dev/null 2>&1 || true
+    git -C "$APP_HOME" reset --hard "origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || git -C "$APP_HOME" pull --ff-only origin "$DEFAULT_BRANCH" >/dev/null 2>&1 || true
   else
     rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
     git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1
@@ -117,15 +121,14 @@ enable_and_start() {
 }
 
 print_summary() {
-  echo "\nServer installation complete. Summary:"
-  echo "  App home:        $APP_HOME"
-  echo "  Service user:    $APP_USER"
-  echo "  Server .env:     $APP_HOME/.env"
-  echo "  Service:         orchestrator-stack (server + UI)"
-  echo
-  echo "Check status/logs:"
-  echo "  systemctl status orchestrator-stack"
-  echo "  journalctl -u orchestrator-server -f"
+  printf "\nServer installation complete. Summary:\n"
+  printf "  App home:        %s\n" "$APP_HOME"
+  printf "  Service user:    %s\n" "$APP_USER"
+  printf "  Server .env:     %s/.env\n" "$APP_HOME"
+  printf "  Service:         orchestrator-stack (server + UI)\n\n"
+  printf "Check status/logs:\n"
+  printf "  systemctl status orchestrator-stack\n"
+  printf "  journalctl -u orchestrator-server -f\n"
 }
 
 main() {
