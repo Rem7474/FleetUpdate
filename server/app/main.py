@@ -15,7 +15,7 @@ import asyncio
 import uuid
 
 
-app = FastAPI(title="GitOps Orchestrator Server", version="0.1.0")
+app = FastAPI(title="FleetUpdate Server", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,

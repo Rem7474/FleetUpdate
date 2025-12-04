@@ -1,5 +1,5 @@
 [Unit]
-Description=GitOps Orchestrator Server (FastAPI)
+Description=FleetUpdate Server (FastAPI)
 After=network-online.target
 Wants=network-online.target
 

@@ -1,5 +1,5 @@
 [Unit]
-Description=GitOps Orchestrator Agent
+Description=FleetUpdate Agent
 After=network-online.target
 Wants=network-online.target
 

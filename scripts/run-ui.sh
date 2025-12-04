@@ -23,11 +23,12 @@ if ! command -v npm >/dev/null 2>&1; then
   echo "  sudo apt update; sudo apt install -y nodejs npm" >&2
   echo "Or use NodeSource for a newer LTS: https://github.com/nodesource/distributions" >&2
   exit 1
-}
+fi
 
 if [ ! -d node_modules ]; then
   npm install
 fi
 
 export HOST="${HOST:-0.0.0.0}"
-exec npm run dev
+# Ensure Vite binds to network by passing --host explicitly
+exec npm run dev -- --host "$HOST"

@@ -1,5 +1,5 @@
 [Unit]
-Description=GitOps Orchestrator UI (Vite Dev/Preview)
+Description=FleetUpdate UI (Vite Dev/Preview)
 After=network-online.target
 
 [Service]
