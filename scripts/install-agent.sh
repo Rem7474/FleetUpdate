@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Agent-only installer for Debian/Ubuntu-like systems.
 # - Creates service user and deploys repo to /opt/orchestrator
-# - Installs prerequisites (python3-venv, rsync, git)
+# - Installs prerequisites (python3-venv, git)
 # - Creates /etc/orchestrator-agent/config.yaml (can patch via env vars)
 # - Installs systemd agent service and starts it
 
@@ -32,17 +32,23 @@ need_root() {
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 install_prereqs() {
-  if have_cmd apt-get; then
-    echo "Installing prerequisites with apt-get..."
-    apt-get update -y >/dev/null 2>&1 || apt-get update -y
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv rsync git ca-certificates >/dev/null 2>&1 || \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv rsync git ca-certificates
-    # If Python is 3.12 and ensurepip missing, try python3.12-venv
+  if have_cmd apt; then
+    echo "Installing prerequisites with apt (only missing ones)..."
+    apt update -y >/dev/null 2>&1 || apt update -y
+    pkgs=()
+    have_cmd python3 || pkgs+=(python3)
+    python3 -c 'import ensurepip' >/dev/null 2>&1 || pkgs+=(python3-venv)
+    have_cmd git || pkgs+=(git)
+    pkgs+=(ca-certificates)
+    if [ ${#pkgs[@]} -gt 0 ]; then
+      DEBIAN_FRONTEND=noninteractive apt install -y -qq "${pkgs[@]}" >/dev/null 2>&1 || \
+      DEBIAN_FRONTEND=noninteractive apt install -y "${pkgs[@]}"
+    fi
     if have_cmd python3 && ! python3 -c 'import ensurepip' >/dev/null 2>&1; then
-      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3.12-venv >/dev/null 2>&1 || apt-get install -y python3.12-venv || true
+      DEBIAN_FRONTEND=noninteractive apt install -y -qq python3.12-venv >/dev/null 2>&1 || apt install -y python3.12-venv || true
     fi
   else
-    echo "apt-get not found; please install Python venv, rsync, and git manually." >&2
+    echo "apt not found; please install Python venv, git and curl manually." >&2
   fi
 }
 
@@ -62,8 +68,7 @@ deploy_repo() {
     if ! git -C "$APP_HOME" fetch --all --quiet >/dev/null 2>&1; then
       echo "Warning: git fetch failed; attempting full reclone..." >&2
       rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
-      git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || {
-        echo "Error: git clone failed" >&2; exit 1; }
+      git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
     else
       DEFAULT_BRANCH=$(git -C "$APP_HOME" remote show origin 2>/dev/null | awk '/HEAD branch/ {print $NF}')
       DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
@@ -76,13 +81,12 @@ deploy_repo() {
       git -C "$APP_HOME" pull --ff-only origin "$DEFAULT_BRANCH" >/dev/null 2>&1 || {
         echo "Warning: git reset/pull failed; attempting reclone..." >&2
         rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
-        git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || {
-          echo "Error: git clone failed" >&2; exit 1; }
+        git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
       }
     fi
   else
     rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
-    git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1
+    git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
   fi
   chown -R "$APP_USER:$APP_GROUP" "$APP_HOME" >/dev/null 2>&1 || true
 }
@@ -131,6 +135,8 @@ print_summary() {
 
 main() {
   need_root
+  # Stop agent service before updating files
+  systemctl stop orchestrator-agent >/dev/null 2>&1 || true
   install_prereqs
   ensure_user
   deploy_repo

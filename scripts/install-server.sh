@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Server installer (server + UI) for Debian/Ubuntu-like systems.
 # - Creates service user and deploys repo to /opt/orchestrator
-# - Installs prerequisites (python3-venv, nodejs, npm, rsync, git)
+# - Installs prerequisites (python3-venv, nodejs, npm, git)
 # - Writes /opt/orchestrator/.env with a strong SERVER_PSK if missing
 # - Installs systemd services and starts orchestrator-stack
 
@@ -24,17 +24,27 @@ need_root() {
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 install_prereqs() {
-  if have_cmd apt-get; then
-    echo "Installing prerequisites with apt-get..."
-    apt-get update -y >/dev/null 2>&1 || apt-get update -y
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv nodejs npm rsync git ca-certificates >/dev/null 2>&1 || \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv nodejs npm rsync git ca-certificates
+  if have_cmd apt; then
+    echo "Installing prerequisites with apt (only missing ones)..."
+    apt update -y >/dev/null 2>&1 || apt update -y
+    # Build list of missing packages
+    pkgs=()
+    have_cmd python3 || pkgs+=(python3)
+    python3 -c 'import ensurepip' >/dev/null 2>&1 || pkgs+=(python3-venv)
+    have_cmd node || have_cmd nodejs || pkgs+=(nodejs)
+    have_cmd npm || pkgs+=(npm)
+    have_cmd git || pkgs+=(git)
+    pkgs+=(ca-certificates)
+    if [ ${#pkgs[@]} -gt 0 ]; then
+      DEBIAN_FRONTEND=noninteractive apt install -y -qq "${pkgs[@]}" >/dev/null 2>&1 || \
+      DEBIAN_FRONTEND=noninteractive apt install -y "${pkgs[@]}"
+    fi
     # If Python is 3.12 and ensurepip missing, try python3.12-venv
     if have_cmd python3 && ! python3 -c 'import ensurepip' >/dev/null 2>&1; then
-      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3.12-venv >/dev/null 2>&1 || apt-get install -y python3.12-venv || true
+      DEBIAN_FRONTEND=noninteractive apt install -y -qq python3.12-venv >/dev/null 2>&1 || apt install -y python3.12-venv || true
     fi
   else
-    echo "apt-get not found; please install Python venv, Node.js, npm, rsync, and git manually." >&2
+    echo "apt not found; please install Python venv, Node.js, npm, git and curl manually." >&2
   fi
 }
 
@@ -49,35 +59,31 @@ ensure_user() {
 deploy_repo() {
   echo "Deploying repository from $REPO_URL to $APP_HOME ..."
   mkdir -p "$APP_HOME"
+  # Updates must be done via git only
   if [ -d "$APP_HOME/.git" ]; then
     echo "Repo exists in $APP_HOME, pulling latest..."
     if ! git -C "$APP_HOME" fetch --all --quiet >/dev/null 2>&1; then
       echo "Warning: git fetch failed; attempting full reclone..." >&2
       rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
-      git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || {
-        echo "Error: git clone failed" >&2; exit 1; }
+      git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
     else
-      # Determine default branch (main or master)
       DEFAULT_BRANCH=$(git -C "$APP_HOME" remote show origin 2>/dev/null | awk '/HEAD branch/ {print $NF}')
       DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
-      # Ensure branch exists locally; if not, create tracking branch
       if ! git -C "$APP_HOME" rev-parse --verify "$DEFAULT_BRANCH" >/dev/null 2>&1; then
         git -C "$APP_HOME" checkout -b "$DEFAULT_BRANCH" "origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || true
       else
         git -C "$APP_HOME" checkout "$DEFAULT_BRANCH" >/dev/null 2>&1 || true
       fi
-      # Hard reset to origin, fallback to pull
       git -C "$APP_HOME" reset --hard "origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || \
-      git -C "$APP_HOME" pull --ff-only origin "$DEFAULT_BRANCH" >/dev/null 2>&1 || {
+      git -C "$APP_HOME" pull --ff-only origin "$DEFAULT_BRANCH" >/devnull 2>&1 || {
         echo "Warning: git reset/pull failed; attempting reclone..." >&2
         rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
-        git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || {
-          echo "Error: git clone failed" >&2; exit 1; }
+        git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
       }
     fi
   else
     rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
-    git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1
+    git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
   fi
   chown -R "$APP_USER:$APP_GROUP" "$APP_HOME" >/dev/null 2>&1 || true
 }
@@ -151,6 +157,10 @@ print_summary() {
 
 main() {
   need_root
+  # Stop services before updating files
+  systemctl stop orchestrator-stack >/dev/null 2>&1 || true
+  systemctl stop orchestrator-ui >/dev/null 2>&1 || true
+  systemctl stop orchestrator-server >/dev/null 2>&1 || true
   install_prereqs
   ensure_user
   deploy_repo
