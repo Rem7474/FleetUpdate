@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Set VERBOSE=1 to enable shell tracing
+VERBOSE="${VERBOSE:-0}"
+[ "$VERBOSE" = "1" ] && set -x
+
 # Agent-only installer for Debian/Ubuntu-like systems.
 # - Creates service user and deploys repo to /opt/orchestrator
 # - Installs prerequisites (python3-venv, git)
@@ -48,7 +52,7 @@ install_prereqs() {
       DEBIAN_FRONTEND=noninteractive apt install -y -qq python3.12-venv >/dev/null 2>&1 || apt install -y python3.12-venv || true
     fi
   else
-    echo "apt not found; please install Python venv, git and curl manually." >&2
+    echo "apt not found; please install Python venv and git manually." >&2
   fi
 }
 
@@ -60,33 +64,59 @@ ensure_user() {
   chown -R "$APP_USER:$APP_GROUP" "$APP_HOME" >/dev/null 2>&1 || true
 }
 
+clean_app_home() {
+  echo "Cleaning directory: $APP_HOME"
+  if [ -d "$APP_HOME" ]; then
+    # Remove all contents including dotfiles but keep the directory
+    find "$APP_HOME" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+  fi
+}
+
 deploy_repo() {
   echo "Deploying repository from $REPO_URL to $APP_HOME ..."
   mkdir -p "$APP_HOME"
   if [ -d "$APP_HOME/.git" ]; then
-    echo "Repo exists in $APP_HOME, pulling latest..."
-    if ! git -C "$APP_HOME" fetch --all --quiet >/dev/null 2>&1; then
+    echo "Repo exists in $APP_HOME, ensuring correct remote and pulling latest..."
+    echo "Running: git -C '$APP_HOME' remote set-url origin '$REPO_URL'"
+    git -C "$APP_HOME" remote set-url origin "$REPO_URL" || true
+    echo "Running: git -C '$APP_HOME' fetch --prune --tags"
+    if ! git -C "$APP_HOME" fetch --prune --tags; then
       echo "Warning: git fetch failed; attempting full reclone..." >&2
-      rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
-      git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
+      git --version || true
+      echo "Remote URL: $REPO_URL" >&2
+      echo "Testing connectivity with: git ls-remote $REPO_URL" >&2
+      GIT_TRACE=1 GIT_CURL_VERBOSE=1 git ls-remote "$REPO_URL" || true
+      echo "Directory perms:" >&2; ls -ld "$APP_HOME" || true
+      echo "Disk space:" >&2; df -h "$APP_HOME" || true
+      clean_app_home
+      echo "Running: git clone --depth=1 '$REPO_URL' '$APP_HOME'"
+      git clone --depth=1 "$REPO_URL" "$APP_HOME" || { echo "Error: git clone failed" >&2; exit 1; }
     else
       DEFAULT_BRANCH=$(git -C "$APP_HOME" remote show origin 2>/dev/null | awk '/HEAD branch/ {print $NF}')
       DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
       if ! git -C "$APP_HOME" rev-parse --verify "$DEFAULT_BRANCH" >/dev/null 2>&1; then
+        echo "Running: git -C '$APP_HOME' checkout -b '$DEFAULT_BRANCH' 'origin/$DEFAULT_BRANCH'"
         git -C "$APP_HOME" checkout -b "$DEFAULT_BRANCH" "origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || true
       else
+        echo "Running: git -C '$APP_HOME' checkout '$DEFAULT_BRANCH'"
         git -C "$APP_HOME" checkout "$DEFAULT_BRANCH" >/dev/null 2>&1 || true
       fi
+      echo "Running: git -C '$APP_HOME' reset --hard 'origin/$DEFAULT_BRANCH' || git -C '$APP_HOME' pull --ff-only origin '$DEFAULT_BRANCH'"
       git -C "$APP_HOME" reset --hard "origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || \
       git -C "$APP_HOME" pull --ff-only origin "$DEFAULT_BRANCH" >/dev/null 2>&1 || {
         echo "Warning: git reset/pull failed; attempting reclone..." >&2
-        rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
-        git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
+        clean_app_home
+        echo "Running: git clone --depth=1 '$REPO_URL' '$APP_HOME'"
+        git clone --depth=1 "$REPO_URL" "$APP_HOME" || { echo "Error: git clone failed" >&2; exit 1; }
       }
     fi
   else
-    rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
-    git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
+    if [ -n "$(ls -A "$APP_HOME" 2>/dev/null || true)" ]; then
+      echo "Non-git contents detected in $APP_HOME; cleaning before clone..."
+      clean_app_home
+    fi
+    echo "Running: git clone --depth=1 '$REPO_URL' '$APP_HOME'"
+    git clone --depth=1 "$REPO_URL" "$APP_HOME" || { echo "Error: git clone failed" >&2; exit 1; }
   fi
   chown -R "$APP_USER:$APP_GROUP" "$APP_HOME" >/dev/null 2>&1 || true
 }

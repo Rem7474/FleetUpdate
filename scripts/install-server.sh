@@ -56,15 +56,23 @@ ensure_user() {
   chown -R "$APP_USER:$APP_GROUP" "$APP_HOME" >/dev/null 2>&1 || true
 }
 
+clean_app_home() {
+  echo "Cleaning directory: $APP_HOME"
+  if [ -d "$APP_HOME" ]; then
+    find "$APP_HOME" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+  fi
+}
+
 deploy_repo() {
   echo "Deploying repository from $REPO_URL to $APP_HOME ..."
   mkdir -p "$APP_HOME"
   # Updates must be done via git only
   if [ -d "$APP_HOME/.git" ]; then
-    echo "Repo exists in $APP_HOME, pulling latest..."
-    if ! git -C "$APP_HOME" fetch --all --quiet >/dev/null 2>&1; then
+    echo "Repo exists in $APP_HOME, ensuring correct remote and pulling latest..."
+    git -C "$APP_HOME" remote set-url origin "$REPO_URL" || true
+    if ! git -C "$APP_HOME" fetch --prune --tags; then
       echo "Warning: git fetch failed; attempting full reclone..." >&2
-      rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
+      clean_app_home
       git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
     else
       DEFAULT_BRANCH=$(git -C "$APP_HOME" remote show origin 2>/dev/null | awk '/HEAD branch/ {print $NF}')
@@ -75,14 +83,17 @@ deploy_repo() {
         git -C "$APP_HOME" checkout "$DEFAULT_BRANCH" >/dev/null 2>&1 || true
       fi
       git -C "$APP_HOME" reset --hard "origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || \
-      git -C "$APP_HOME" pull --ff-only origin "$DEFAULT_BRANCH" >/devnull 2>&1 || {
+      git -C "$APP_HOME" pull --ff-only origin "$DEFAULT_BRANCH" >/dev/null 2>&1 || {
         echo "Warning: git reset/pull failed; attempting reclone..." >&2
-        rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
+        clean_app_home
         git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
       }
     fi
   else
-    rm -rf "$APP_HOME"/* "$APP_HOME"/.git >/dev/null 2>&1 || true
+    if [ -n "$(ls -A "$APP_HOME" 2>/dev/null || true)" ]; then
+      echo "Non-git contents detected in $APP_HOME; cleaning before clone..."
+      clean_app_home
+    fi
     git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
   fi
   chown -R "$APP_USER:$APP_GROUP" "$APP_HOME" >/dev/null 2>&1 || true
