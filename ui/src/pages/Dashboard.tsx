@@ -98,6 +98,18 @@ export default function Dashboard() {
               {a.os_update && (
                 <Badge status={(a.os_update.upgrades ?? 0) > 0 ? 'error' : 'success'} text={`MAJ: ${a.os_update.upgrades ?? 0}`} />
               )}
+              {a.os_update && a.os_update.os_version && (
+                <Tag>{`OS: ${a.os_update.os_version}`}</Tag>
+              )}
+              {a.os_update && a.os_update.kernel && (
+                <Tag>{`Kernel: ${a.os_update.kernel}`}</Tag>
+              )}
+              {a.os_update && a.os_update.arch && (
+                <Tag>{`Arch: ${a.os_update.arch}`}</Tag>
+              )}
+              {(a as any).agent_version || (a as any).version ? (
+                <Tag>{`Agent: ${(a as any).agent_version ?? (a as any).version}`}</Tag>
+              ) : null}
               {a.os_update && a.os_update.sudo_apt_ok === false && (
                 <Tag color="orange">sudo non configuré</Tag>
               )}

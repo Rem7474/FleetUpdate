@@ -11,6 +11,8 @@ class Settings(BaseModel):
     ui_password: str = os.getenv("UI_PASSWORD", "")
     ui_password_hash: str | None = os.getenv("UI_PASSWORD_HASH")
     jwt_secret: str = os.getenv("JWT_SECRET", "")
+    desired_state_repo: str | None = os.getenv("DESIRED_STATE_REPO")
+    desired_state_path: str = os.getenv("DESIRED_STATE_PATH", "desired/state.json")
 
 
 settings = Settings()

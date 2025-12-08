@@ -31,6 +31,9 @@ async def send_heartbeat(client: httpx.AsyncClient, settings: AgentSettings, app
         "apps": collect_apps_state(apps_cfg),
         "logs": [],
     }
+    # Agent software version (prefer env override, else module/package version)
+    agent_version = os.environ.get("AGENT_VERSION") or "1.0.0"
+    payload["agent_version"] = agent_version
     payload["os_update"] = collect_os_update_status()
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     sig = sign_bytes(body, settings.psk)

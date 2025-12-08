@@ -15,6 +15,8 @@ import json
 from datetime import datetime
 import asyncio
 import uuid
+import time
+from typing import Dict, Any
 
 
 app = FastAPI(title="FleetUpdate Server", version="0.1.0")
@@ -49,6 +51,29 @@ def _startup():
     if missing:
         raise RuntimeError(f"Missing required environment/config for production: {', '.join(missing)}")
     init_db()
+# --------- Simple Rate Limiting for Login ---------
+_login_attempts: Dict[str, Dict[str, Any]] = {}
+
+def _check_login_rate_limit(ip: str) -> None:
+    now = time.time()
+    rec = _login_attempts.get(ip)
+    if rec and rec.get("cooldown_until", 0) > now:
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+
+def _register_login_attempt(ip: str, success: bool) -> None:
+    now = time.time()
+    rec = _login_attempts.get(ip) or {"count": 0, "cooldown_until": 0}
+    if success:
+        rec["count"] = 0
+        rec["cooldown_until"] = 0
+    else:
+        rec["count"] = rec.get("count", 0) + 1
+        # Escalating cooldown: 5s after 5 attempts, 10s after 10, cap at 60s
+        if rec["count"] >= 5:
+            steps = max(1, rec["count"] // 5)
+            cooldown = min(60, steps * 5)
+            rec["cooldown_until"] = now + cooldown
+    _login_attempts[ip] = rec
 
 
 @app.get("/api/health")
@@ -76,18 +101,23 @@ def require_user(authorization: str | None = Header(default=None, alias="Authori
 
 
 @app.post("/api/auth/login")
-async def auth_login(payload: dict):
+async def auth_login(payload: dict, request: Request):
+    ip = request.client.host if request.client else "unknown"
+    _check_login_rate_limit(ip)
     username = payload.get("username")
     password = payload.get("password")
     if username != settings.ui_user:
+        _register_login_attempt(ip, False)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if settings.ui_password_hash:
         ok = verify_password(password or "", settings.ui_password_hash, True)
     else:
         ok = verify_password(password or "", settings.ui_password, False)
     if not ok:
+        _register_login_attempt(ip, False)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = create_access_token(subject=settings.ui_user)
+    _register_login_attempt(ip, True)
     return {"token": token}
 
 
@@ -340,3 +370,38 @@ async def ws_broadcast(message: dict):
             dead.append(ws)
     for ws in dead:
         _ws_clients.discard(ws)
+
+
+# --------- Desired State & Drift (MVP scaffold) ---------
+def _load_desired_state() -> Dict[str, Any]:
+    path = os.path.join(os.path.dirname(__file__), "..", "..", settings.desired_state_path)
+    path = os.path.abspath(path)
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+@app.get("/api/drift")
+def drift(user: str = Depends(require_user)):
+    desired = _load_desired_state()
+    groups = desired.get("groups", {})
+    assignments = desired.get("assignments", {})
+    res: Dict[str, Any] = {"drift": []}
+    with Session(engine) as session:
+        agents = session.exec(select(Agent)).all()
+        for a in agents:
+            group = assignments.get(a.id)
+            target = (groups.get(group, {}) if group else {})
+            target_apps = target.get("apps", {})
+            actual_apps = json.loads(a.apps_state) if a.apps_state else {}
+            drift_items = []
+            for name, t in target_apps.items():
+                av = actual_apps.get(name)
+                if av is None or av.get("version") != t.get("version"):
+                    drift_items.append({"app": name, "expected": t, "actual": av})
+            res["drift"].append({"agent": a.id, "group": group, "items": drift_items})
+    return res

@@ -66,13 +66,13 @@ Consultez `docs/ARCHITECTURE.md` et `docs/SECURITY.md` pour les détails.
 Pour automatiser l’installation, deux scripts sont fournis (avec prompts interactifs):
 - Serveur + UI (sur la machine serveur):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Rem7474/FleetUpdate/main/scripts/install-server.sh -o install-server.sh
+curl -fsSL https://raw.github.com/Rem7474/FleetUpdate/main/scripts/install-server.sh -o install-server.sh
 chmod +x install-server.sh
 sudo ./install-server.sh
 ```
 - Agent seul (à lancer sur chaque VM agent):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Rem7474/FleetUpdate/main/scripts/install-agent.sh -o install-agent.sh
+curl -fsSL https://raw.github.com/Rem7474/FleetUpdate/main/scripts/install-agent.sh -o install-agent.sh
 chmod +x install-agent.sh
 # Prompts: AGENT_ID, SERVER_URL et PSK (doit correspondre au SERVER_PSK du serveur)
 sudo ./install-agent.sh
