@@ -20,6 +20,7 @@ APP_HOME="/opt/orchestrator"
 AGENT_CONF_DIR="/etc/orchestrator-agent"
 AGENT_CONF_PATH="$AGENT_CONF_DIR/config.yaml"
 SYSTEMD_DIR="/etc/systemd/system"
+NO_PROMPT="${NO_PROMPT:-0}"
 
 # Optional env overrides for config templating
 AGENT_ID_DEFAULT="${AGENT_ID:-}"
@@ -140,6 +141,23 @@ setup_agent_config() {
   chown -R "$APP_USER:$APP_GROUP" "$AGENT_CONF_DIR" >/dev/null 2>&1 || true
 }
 
+prompt_agent_config() {
+  if [ "$NO_PROMPT" = "1" ]; then
+    echo "NO_PROMPT=1 set; skipping interactive agent config prompts."; return 0;
+  fi
+  # Ask interactively when not supplied via env
+  if [ -z "$AGENT_ID_DEFAULT" ]; then
+    read -r -p "Agent ID (e.g., vm-01): " AGENT_ID_DEFAULT || true
+  fi
+  if [ -z "$SERVER_URL_DEFAULT" ]; then
+    read -r -p "Server URL (default http://<ip>:8000): " SERVER_URL_DEFAULT || true
+  fi
+  if [ -z "$AGENT_PSK_DEFAULT" ]; then
+    printf "Agent PSK (must match server SERVER_PSK): "
+    stty -echo; read -r AGENT_PSK_DEFAULT; stty echo; printf "\n"
+  fi
+}
+
 install_services() {
   echo "Installing systemd unit for agent ..."
   cp -f "$APP_HOME/infra/systemd/orchestrator-agent.service" "$SYSTEMD_DIR/" >/dev/null 2>&1
@@ -170,6 +188,7 @@ main() {
   install_prereqs
   ensure_user
   deploy_repo
+  prompt_agent_config
   setup_agent_config
   install_services
   enable_and_start

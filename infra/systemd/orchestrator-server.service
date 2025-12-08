@@ -10,8 +10,6 @@ Group=orchestrator
 # Change to your deployment path
 WorkingDirectory=/opt/orchestrator
 Environment=PYTHONUNBUFFERED=1
-# Set a strong PSK for production
-Environment=SERVER_PSK=changeme
 ExecStart=/bin/bash scripts/run-server.sh
 Restart=on-failure
 RestartSec=5s

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Server installer (server + UI) for Debian/Ubuntu-like systems.
+# Server installer (server + UI on single port) for Debian/Ubuntu-like systems.
 # - Creates service user and deploys repo to /opt/orchestrator
 # - Installs prerequisites (python3-venv, nodejs, npm, git)
 # - Writes /opt/orchestrator/.env with a strong SERVER_PSK if missing
-# - Installs systemd services and starts orchestrator-stack
+# - Prompts for UI credentials (username/password)
+# - Builds UI and installs/starts orchestrator-server systemd unit
 
 # Standalone installer: fetch repo directly to /opt/orchestrator using git
 REPO_URL="${REPO_URL_OVERRIDE:-https://github.com/Rem7474/FleetUpdate.git}"
@@ -13,6 +14,7 @@ APP_USER="orchestrator"
 APP_GROUP="orchestrator"
 APP_HOME="/opt/orchestrator"
 SYSTEMD_DIR="/etc/systemd/system"
+NO_PROMPT="${NO_PROMPT:-0}"
 
 need_root() {
   if [ "${EUID:-$(id -u)}" -ne 0 ]; then
@@ -69,24 +71,26 @@ deploy_repo() {
   # Updates must be done via git only
   if [ -d "$APP_HOME/.git" ]; then
     echo "Repo exists in $APP_HOME, ensuring correct remote and pulling latest..."
-    git -C "$APP_HOME" remote set-url origin "$REPO_URL" || true
-    if ! git -C "$APP_HOME" fetch --prune --tags; then
+    # Configure safe.directory for the service user to avoid 'dubious ownership' errors
+    sudo -u "$APP_USER" bash -lc "git config --global --add safe.directory '$APP_HOME'" || true
+    sudo -u "$APP_USER" bash -lc "git -C '$APP_HOME' remote set-url origin '$REPO_URL'" || true
+    if ! sudo -u "$APP_USER" bash -lc "git -C '$APP_HOME' fetch --prune --tags"; then
       echo "Warning: git fetch failed; attempting full reclone..." >&2
       clean_app_home
-      git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
+      sudo -u "$APP_USER" bash -lc "git clone --depth=1 '$REPO_URL' '$APP_HOME'" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
     else
-      DEFAULT_BRANCH=$(git -C "$APP_HOME" remote show origin 2>/dev/null | awk '/HEAD branch/ {print $NF}')
+      DEFAULT_BRANCH=$(sudo -u "$APP_USER" bash -lc "git -C '$APP_HOME' remote show origin" 2>/dev/null | awk '/HEAD branch/ {print $NF}')
       DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
-      if ! git -C "$APP_HOME" rev-parse --verify "$DEFAULT_BRANCH" >/dev/null 2>&1; then
-        git -C "$APP_HOME" checkout -b "$DEFAULT_BRANCH" "origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || true
+      if ! sudo -u "$APP_USER" bash -lc "git -C '$APP_HOME' rev-parse --verify '$DEFAULT_BRANCH'" >/dev/null 2>&1; then
+        sudo -u "$APP_USER" bash -lc "git -C '$APP_HOME' checkout -b '$DEFAULT_BRANCH' 'origin/$DEFAULT_BRANCH'" >/dev/null 2>&1 || true
       else
-        git -C "$APP_HOME" checkout "$DEFAULT_BRANCH" >/dev/null 2>&1 || true
+        sudo -u "$APP_USER" bash -lc "git -C '$APP_HOME' checkout '$DEFAULT_BRANCH'" >/dev/null 2>&1 || true
       fi
-      git -C "$APP_HOME" reset --hard "origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || \
-      git -C "$APP_HOME" pull --ff-only origin "$DEFAULT_BRANCH" >/dev/null 2>&1 || {
+      sudo -u "$APP_USER" bash -lc "git -C '$APP_HOME' reset --hard 'origin/$DEFAULT_BRANCH'" >/dev/null 2>&1 || \
+      sudo -u "$APP_USER" bash -lc "git -C '$APP_HOME' pull --ff-only origin '$DEFAULT_BRANCH'" >/dev/null 2>&1 || {
         echo "Warning: git reset/pull failed; attempting reclone..." >&2
         clean_app_home
-        git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
+        sudo -u "$APP_USER" bash -lc "git clone --depth=1 '$REPO_URL' '$APP_HOME'" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
       }
     fi
   else
@@ -94,7 +98,8 @@ deploy_repo() {
       echo "Non-git contents detected in $APP_HOME; cleaning before clone..."
       clean_app_home
     fi
-    git clone --depth=1 "$REPO_URL" "$APP_HOME" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
+    sudo -u "$APP_USER" bash -lc "git config --global --add safe.directory '$APP_HOME'" || true
+    sudo -u "$APP_USER" bash -lc "git clone --depth=1 '$REPO_URL' '$APP_HOME'" >/dev/null 2>&1 || { echo "Error: git clone failed" >&2; exit 1; }
   fi
   chown -R "$APP_USER:$APP_GROUP" "$APP_HOME" >/dev/null 2>&1 || true
 }
@@ -124,16 +129,61 @@ HOST=0.0.0.0
 EOF
     chown "$APP_USER:$APP_GROUP" "$env_file" >/dev/null 2>&1 || true
     chmod 600 "$env_file" >/dev/null 2>&1 || true
-    echo "Edit $env_file to set UI_USER/UI_PASSWORD before exposing the UI."
+    echo "A base config was created at $env_file"
   else
     echo "$env_file already exists; leaving as-is."
   fi
 }
 
+prompt_server_config() {
+  if [ "$NO_PROMPT" = "1" ]; then
+    echo "NO_PROMPT=1 set; skipping interactive server config prompts."; return 0;
+  fi
+  local env_file="$APP_HOME/.env"
+  [ -f "$env_file" ] || { echo "Missing $env_file" >&2; return 1; }
+
+  # Read existing values
+  local cur_user="$(grep -E '^UI_USER=' "$env_file" | sed 's/^UI_USER=//')"
+  local cur_pass="$(grep -E '^UI_PASSWORD=' "$env_file" | sed 's/^UI_PASSWORD=//')"
+  local cur_jwt="$(grep -E '^JWT_SECRET=' "$env_file" | sed 's/^JWT_SECRET=//')"
+
+  # Prompt username
+  local input_user
+  read -r -p "UI username [${cur_user:-admin}]: " input_user || true
+  input_user=${input_user:-${cur_user:-admin}}
+
+  # Prompt password (silent)
+  local input_pass
+  if [ -z "$cur_pass" ]; then
+    printf "UI password: "
+    stty -echo; read -r input_pass; stty echo; printf "\n"
+  else
+    read -r -p "UI password [kept existing]: " _ignore || true
+    input_pass="$cur_pass"
+  fi
+
+  # JWT secret (generate if empty)
+  local input_jwt="$cur_jwt"
+  if [ -z "$input_jwt" ]; then
+    if have_cmd openssl; then input_jwt="$(openssl rand -hex 32)"; else input_jwt="jwt-$(date +%s)"; fi
+  fi
+
+  # Apply changes (escape sed special chars minimally)
+  sed -i "s/^UI_USER=.*/UI_USER=${input_user}/" "$env_file" || true
+  sed -i "s/^UI_PASSWORD=.*/UI_PASSWORD=${input_pass}/" "$env_file" || true
+  if grep -qE '^JWT_SECRET=' "$env_file"; then
+    sed -i "s/^JWT_SECRET=.*/JWT_SECRET=${input_jwt}/" "$env_file" || true
+  else
+    echo "JWT_SECRET=${input_jwt}" >> "$env_file"
+  fi
+
+  echo "Configured UI credentials in $env_file"
+}
+
 install_services() {
   echo "Installing systemd units ..."
   # Force update unit files
-  cp -f "$APP_HOME/infra/systemd/orchestrator-"*.service "$SYSTEMD_DIR/" >/dev/null 2>&1
+  cp -f "$APP_HOME/infra/systemd/orchestrator-server.service" "$SYSTEMD_DIR/" >/dev/null 2>&1 || true
 
   # Ensure server unit can load environment
   mkdir -p "$SYSTEMD_DIR/orchestrator-server.service.d"
@@ -144,15 +194,13 @@ EOF
 
   systemctl daemon-reload >/dev/null 2>&1 || systemctl daemon-reload
   # Ensure updated units are enabled
-  systemctl enable orchestrator-stack >/dev/null 2>&1 || true
   systemctl enable orchestrator-server >/dev/null 2>&1 || true
-  systemctl enable orchestrator-ui >/dev/null 2>&1 || true
 }
 
 enable_and_start() {
-  echo "Enabling and starting server stack ..."
+  echo "Enabling and starting server ..."
   # Restart to pick up unit changes
-  systemctl restart orchestrator-stack >/dev/null 2>&1 || systemctl start orchestrator-stack >/dev/null 2>&1
+  systemctl restart orchestrator-server >/dev/null 2>&1 || systemctl start orchestrator-server >/dev/null 2>&1
 }
 
 print_summary() {
@@ -160,17 +208,15 @@ print_summary() {
   printf "  App home:        %s\n" "$APP_HOME"
   printf "  Service user:    %s\n" "$APP_USER"
   printf "  Server .env:     %s/.env\n" "$APP_HOME"
-  printf "  Service:         orchestrator-stack (server + UI)\n\n"
+  printf "  Service:         orchestrator-server (serves UI + API)\n\n"
   printf "Check status/logs:\n"
-  printf "  systemctl status orchestrator-stack\n"
+  printf "  systemctl status orchestrator-server\n"
   printf "  journalctl -u orchestrator-server -f\n"
 }
 
 main() {
   need_root
   # Stop services before updating files
-  systemctl stop orchestrator-stack >/dev/null 2>&1 || true
-  systemctl stop orchestrator-ui >/dev/null 2>&1 || true
   systemctl stop orchestrator-server >/dev/null 2>&1 || true
   install_prereqs
   ensure_user
@@ -180,6 +226,7 @@ main() {
   sudo -u "$APP_USER" bash -lc "cd '$APP_HOME/ui' && npm install && npm run build" || {
     echo "Error: UI build failed" >&2; exit 1; }
   write_env
+  prompt_server_config
   install_services
   enable_and_start
   print_summary

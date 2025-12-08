@@ -5,7 +5,7 @@
 - UI (Vite React): Dashboard, VM detail avec terminal temps réel.
 
 ## Lancement
-Le serveur et l'UI sont lancés ensemble par défaut via `scripts/run-stack.sh` ou `infra/systemd/orchestrator-stack.service`. Les agents se connectent en pull-only.
+En production, le serveur FastAPI sert aussi l'UI (bundle `ui/dist`) sur un seul port via `orchestrator-server.service`. En développement, utilisez `scripts/run-stack.sh`.
 
 ## Communication
 - Agent → Serveur: Heartbeat + résultats de commandes signés HMAC (PSK)

@@ -69,7 +69,7 @@ Consultez `docs/ARCHITECTURE.md` et `docs/SECURITY.md` pour les détails.
 
 ## Installateurs (one-shot)
 
-Pour automatiser l’installation, deux scripts sont fournis:
+Pour automatiser l’installation, deux scripts sont fournis (avec prompts interactifs):
 - Serveur + UI (sur la machine serveur):
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Rem7474/FleetUpdate/main/scripts/install-server.sh -o install-server.sh
@@ -80,10 +80,7 @@ sudo ./install-server.sh
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Rem7474/FleetUpdate/main/scripts/install-agent.sh -o install-agent.sh
 chmod +x install-agent.sh
-# Variables optionnelles pour personnaliser la config agent
-export AGENT_ID=vm-01
-export SERVER_URL=http://<ip-serveur>:8000
-export AGENT_PSK=<psk-identique-au-serveur>
+# Prompts: AGENT_ID, SERVER_URL et PSK (doit correspondre au SERVER_PSK du serveur)
 sudo ./install-agent.sh
 ```
 Les installateurs créent l’utilisateur `orchestrator`, déploient le code sous `/opt/orchestrator`, installent les prérequis, configurent systemd et démarrent les services.
@@ -102,9 +99,9 @@ Les installateurs créent l’utilisateur `orchestrator`, déploient le code sou
 ### Ce qu’il faut configurer (obligatoire)
 - Côté serveur (`/opt/orchestrator/.env`):
 	- `SERVER_PSK`: secret partagé avec les agents (fort et privé)
-	- `UI_USER`: identifiant de connexion UI
-	- `UI_PASSWORD` ou `UI_PASSWORD_HASH` (bcrypt) pour l’UI
-	- `JWT_SECRET`: secret de signature des JWT (long et aléatoire)
+	- `UI_USER`: identifiant de connexion UI (demandé pendant l’install)
+	- `UI_PASSWORD` ou `UI_PASSWORD_HASH` (bcrypt) pour l’UI (demandé pendant l’install)
+	- `JWT_SECRET`: secret de signature des JWT (généré si absent)
 	- Exemple:
 		```bash
 		SERVER_PSK=remplacez-par-un-secret-fort
@@ -115,23 +112,22 @@ Les installateurs créent l’utilisateur `orchestrator`, déploient le code sou
 		```
 	- Les unités systemd du serveur lisent automatiquement ce fichier via `EnvironmentFile=/opt/orchestrator/.env`.
 - Côté agent (`/etc/orchestrator-agent/config.yaml`):
-	- `agent.id`: identifiant unique de la VM
-	- `agent.server_url`: URL du serveur (par défaut `http://<ip>:8000`)
-	- `agent.psk`: DOIT être identique à `SERVER_PSK` côté serveur
-	- Vous pouvez préremplir via variables avant `install-agent.sh`:
+	- `agent.id`: identifiant unique de la VM (demandé pendant l’install si non fourni)
+	- `agent.server_url`: URL du serveur (demandé pendant l’install si non fournie)
+	- `agent.psk`: DOIT être identique à `SERVER_PSK` côté serveur (demandé pendant l’install)
+	- Pré-remplissage non interactif possible via variables avant `install-agent.sh`:
 		```bash
 		export AGENT_ID=vm-01
 		export SERVER_URL=http://<ip-serveur>:8000
 		export AGENT_PSK=<même secret que SERVER_PSK>
+		NO_PROMPT=1 sudo ./install-agent.sh
 		```
 
 ### Démarrage et vérifications
 ```bash
-sudo systemctl restart orchestrator-server orchestrator-ui orchestrator-agent || true
-sudo systemctl restart orchestrator-stack || true
+sudo systemctl restart orchestrator-server orchestrator-agent || true
 
 systemctl status orchestrator-server
-systemctl status orchestrator-ui
 systemctl status orchestrator-agent
 journalctl -u orchestrator-server -f
 ```
@@ -140,19 +136,15 @@ journalctl -u orchestrator-server -f
 - Dev: utilisez `scripts/run-stack.sh` (UI en port 5173, API en 8000). La UI dev proxy `/api` vers `http://localhost:8000`.
 - Prod: construisez la UI (`npm run build`) et servez `ui/dist` derrière un reverse proxy (Nginx/Caddy). Routez `/api` vers l’API en 8000 et `/api/ws` avec les en-têtes WebSocket.
 
-Exemple Nginx (production):
+Exemple Nginx (production, serveur unique UI+API sur 8000):
 ```
 server {
 	server_name erpnext.remcorp.fr;
 	listen 443 ssl;
 	# ssl certs...
 
+	# Route tout le trafic vers le serveur FastAPI (qui sert l'UI buildée et l'API)
 	location / {
-		root /srv/fleetupdate/ui/dist;
-		try_files $uri /index.html;
-	}
-
-	location /api {
 		proxy_pass http://<server-ip>:8000;
 		proxy_set_header Host $host;
 		proxy_set_header X-Real-IP $remote_addr;
@@ -160,6 +152,7 @@ server {
 		proxy_http_version 1.1;
 	}
 
+	# WebSocket pour les mises à jour temps réel
 	location /api/ws {
 		proxy_pass http://<server-ip>:8000/api/ws;
 		proxy_http_version 1.1;
@@ -169,6 +162,10 @@ server {
 	}
 }
 ```
+
+Notes:
+- En production, ne servez pas le bundle UI directement depuis Nginx; laissez le serveur FastAPI monter `ui/dist` et gérez un seul port.
+- Si vous séparez UI et API en dev, utilisez le proxy Vite (`/api` → `http://localhost:8000`).
 
 ### Problèmes fréquents et correctifs
 - Login UI impossible:
@@ -196,8 +193,8 @@ server {
 ## Déploiement via systemd (Linux)
 
 Des unités prêtes à l’emploi sont fournies dans `infra/systemd/`:
-- `orchestrator-stack.service` (stack dev: Server + UI)
-- `orchestrator-server.service`, `orchestrator-ui.service`, `orchestrator-agent.service`
+- `orchestrator-server.service` (serve UI + API sur le même port)
+- `orchestrator-agent.service`
 
 1) Prérequis (Debian/Ubuntu)
 ```bash
@@ -205,14 +202,28 @@ sudo apt update
 sudo apt install -y python3-venv
 # si Python 3.12: sudo apt install -y python3.12-venv
 sudo apt install -y nodejs npm
+sudo apt install -y git ca-certificates
 ```
 
-2) Créer l’utilisateur et déployer le code
+2) Créer l’utilisateur et déployer le code (via Git)
 ```bash
 sudo useradd --system --create-home --home-dir /opt/orchestrator --shell /usr/sbin/nologin orchestrator || true
 sudo mkdir -p /opt/orchestrator
-sudo rsync -a --delete . /opt/orchestrator/
 sudo chown -R orchestrator:orchestrator /opt/orchestrator
+sudo -u orchestrator git config --global --add safe.directory /opt/orchestrator || true
+sudo -u orchestrator bash -lc '
+	REPO_URL="https://github.com/Rem7474/FleetUpdate.git";
+	if [ -d /opt/orchestrator/.git ]; then
+		git -C /opt/orchestrator remote set-url origin "$REPO_URL";
+		git -C /opt/orchestrator fetch --prune --tags;
+		BR=$(git -C /opt/orchestrator remote show origin | awk "/HEAD branch/ {print \$NF}");
+		git -C /opt/orchestrator checkout "$BR";
+		git -C /opt/orchestrator reset --hard "origin/$BR";
+	else
+		rm -rf /opt/orchestrator/* /opt/orchestrator/.[!.]* /opt/orchestrator/..?* 2>/dev/null || true;
+		git clone --depth=1 "$REPO_URL" /opt/orchestrator;
+	fi
+'
 ```
 
 3) Configurer l’agent
@@ -235,40 +246,46 @@ sudo cp orchestrator-*.service /etc/systemd/system/
 
 5) Variables d’environnement serveur (sécurité)
 ```bash
-sudo systemctl edit orchestrator-server.service
-# Ajoutez sous [Service] (une ligne par variable):
-# Environment=SERVER_PSK=remplacez-par-un-secret-fort
-# Environment=UI_USER=admin
-# Environment=UI_PASSWORD=motdepasse
-# Environment=JWT_SECRET=un-jeton-secret
+sudo tee /opt/orchestrator/.env > /dev/null <<'EOF'
+SERVER_PSK=remplacez-par-un-secret-fort
+UI_USER=admin
+UI_PASSWORD=motdepasse
+JWT_SECRET=$(openssl rand -hex 32)
+HOST=0.0.0.0
+EOF
+sudo chown orchestrator:orchestrator /opt/orchestrator/.env
+```
+Les unités `orchestrator-server.service` lisent automatiquement ce fichier via `EnvironmentFile=/opt/orchestrator/.env`.
+
+6) Construire la UI (production) et démarrer
+```bash
+cd /opt/orchestrator/ui; sudo -u orchestrator bash -lc 'npm ci || npm install; npm run build'
+sudo systemctl daemon-reload
+sudo systemctl enable orchestrator-server orchestrator-agent
+sudo systemctl start  orchestrator-server  orchestrator-agent
 ```
 
-6) Démarrer
-- Option A (stack + agent):
+Astuce: en mode non interactif, préparez vos variables avant l’install serveur pour éviter les prompts:
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable orchestrator-stack orchestrator-agent
-sudo systemctl start  orchestrator-stack  orchestrator-agent
-```
-- Option B (services séparés):
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable orchestrator-server orchestrator-ui orchestrator-agent
-sudo systemctl start  orchestrator-server  orchestrator-ui  orchestrator-agent
+export UI_USER=admin
+export UI_PASSWORD=motdepasse
+export SERVER_PSK=$(openssl rand -hex 32)
+export JWT_SECRET=$(openssl rand -hex 32)
+NO_PROMPT=1 sudo ./install-server.sh
 ```
 
 7) Vérifier
 ```bash
 systemctl status orchestrator-server
-systemctl status orchestrator-ui
 systemctl status orchestrator-agent
 journalctl -u orchestrator-server -f
 ```
 
 Notes:
 - Les scripts `scripts/run-*.sh` créent/réparent automatiquement les venvs et `node_modules` au premier démarrage.
-- Pour la prod UI, préférez `npm run build` et servez `ui/dist` via un reverse-proxy (Nginx/Caddy) plutôt que le serveur Vite de dev.
+- En production, l’UI est servie par le serveur FastAPI (bundle `ui/dist`) sur le même port que l’API.
 - Ouvrez/routez les ports nécessaires (API `8000`, UI dev `5173`) ou placez un reverse-proxy en frontal.
+
 
 ## Variables d’environnement
 
