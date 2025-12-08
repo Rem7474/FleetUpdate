@@ -129,29 +129,23 @@ journalctl -u orchestrator-server -f
 ### Déploiement (Production)
 Construisez la UI (`npm run build`) et servez `ui/dist` via le serveur FastAPI sur un seul port. Placez un reverse-proxy (Nginx/Caddy) en frontal si nécessaire et routez `/api/ws` avec les en-têtes WebSocket.
 
-Exemple Nginx (production, serveur unique UI+API sur 8000):
+Exemple Nginx (production, serveur unique UI+API+WS sur 8000):
 ```
 server {
 	server_name erpnext.remcorp.fr;
 	listen 443 ssl;
 	# ssl certs...
 
-	# Route tout le trafic vers le serveur FastAPI (qui sert l'UI buildée et l'API)
+	# Route tout le trafic (UI + API + WebSocket /ws) vers le serveur FastAPI
 	location / {
 		proxy_pass http://<server-ip>:8000;
 		proxy_set_header Host $host;
 		proxy_set_header X-Real-IP $remote_addr;
 		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 		proxy_http_version 1.1;
-	}
-
-	# WebSocket pour les mises à jour temps réel
-	location /api/ws {
-		proxy_pass http://<server-ip>:8000/api/ws;
-		proxy_http_version 1.1;
+		# Autoriser l'upgrade WebSocket sans bloc dédié
 		proxy_set_header Upgrade $http_upgrade;
-		proxy_set_header Connection "upgrade";
-		proxy_set_header Host $host;
+		proxy_set_header Connection $connection_upgrade;
 	}
 }
 ```
@@ -159,19 +153,14 @@ server {
 Notes:
 - En production, ne servez pas le bundle UI directement depuis Nginx; laissez le serveur FastAPI monter `ui/dist` et gérez un seul port.
 
-Exemple Caddy (production, serveur unique UI+API sur 8000):
+Exemple Caddy (production, serveur unique UI+API+WS sur 8000):
 ```
 erpnext.remcorp.fr {
 	reverse_proxy 127.0.0.1:8000 {
 		header_up Host {host}
 		header_up X-Real-IP {remote}
 		header_up X-Forwarded-For {remote}
-	}
-
-	@ws {
-		path /api/ws*
-	}
-	reverse_proxy @ws 127.0.0.1:8000 {
+		# Upgrade WebSocket automatiquement
 		header_up Connection {header.Connection}
 		header_up Upgrade {header.Upgrade}
 	}

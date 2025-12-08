@@ -25,7 +25,7 @@ export default function Dashboard() {
   // Live updates via WebSocket
   useEffect(() => {
     const token = localStorage.getItem('token') || ''
-    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ws?token=${encodeURIComponent(token)}`)
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?token=${encodeURIComponent(token)}`)
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data)

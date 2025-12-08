@@ -305,7 +305,7 @@ async def stream_command(command_id: str, user: str = Depends(require_user)):
 _ws_clients: set[WebSocket] = set()
 
 
-@app.websocket("/api/ws")
+@app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     # Simple token via query param ?token=
     token = ws.query_params.get("token")
