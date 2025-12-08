@@ -2,6 +2,8 @@ from fastapi import FastAPI, Header, HTTPException, Request, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi import WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
+import os
 from sqlmodel import Session, select
 from .config import settings
 from .utils.hmac import verify_signature
@@ -24,6 +26,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"]
 )
+
+# Serve built UI (single-port) if available
+ui_dist_path = os.path.join(os.path.dirname(__file__), "..", "..", "ui", "dist")
+ui_dist_path = os.path.abspath(ui_dist_path)
+if os.path.isdir(ui_dist_path):
+    app.mount("/", StaticFiles(directory=ui_dist_path, html=True), name="ui")
 
 
 @app.on_event("startup")

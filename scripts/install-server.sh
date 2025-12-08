@@ -175,6 +175,10 @@ main() {
   install_prereqs
   ensure_user
   deploy_repo
+  # Build UI for single-port serving
+  echo "Building UI production bundle ..."
+  sudo -u "$APP_USER" bash -lc "cd '$APP_HOME/ui' && npm install && npm run build" || {
+    echo "Error: UI build failed" >&2; exit 1; }
   write_env
   install_services
   enable_and_start
