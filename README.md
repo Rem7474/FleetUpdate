@@ -24,11 +24,6 @@ sudo apt install -y python3-venv
 sudo apt install -y nodejs npm
 ```
 
-- Lancer le Stack (Server + UI ensemble):
-```bash
-chmod +x scripts/run-stack.sh
-scripts/run-stack.sh
-```
 - Lancer l'agent (utilise `agent/config.example.yaml`):
 ```bash
 chmod +x scripts/run-agent.sh
@@ -37,7 +32,6 @@ scripts/run-agent.sh
 
 Alternative automatisée (recommandé pour la prod ou plusieurs hôtes): voir la section « Installateurs (one-shot) » ci‑dessous pour utiliser `scripts/install-server.sh` (serveur+UI) et `scripts/install-agent.sh` (agent sur chaque VM).
 
-Accès UI: `http://localhost:5173` (proxy `/api` → `http://localhost:8000`).
 
 ## Sécurité (MVP)
 - Auth Agent↔Serveur: HMAC-SHA256 via `PSK` partagé (en-têtes `X-Agent-Id` et `X-Signature`).
@@ -132,9 +126,8 @@ systemctl status orchestrator-agent
 journalctl -u orchestrator-server -f
 ```
 
-### Dev vs Production
-- Dev: utilisez `scripts/run-stack.sh` (UI en port 5173, API en 8000). La UI dev proxy `/api` vers `http://localhost:8000`.
-- Prod: construisez la UI (`npm run build`) et servez `ui/dist` derrière un reverse proxy (Nginx/Caddy). Routez `/api` vers l’API en 8000 et `/api/ws` avec les en-têtes WebSocket.
+### Déploiement (Production)
+Construisez la UI (`npm run build`) et servez `ui/dist` via le serveur FastAPI sur un seul port. Placez un reverse-proxy (Nginx/Caddy) en frontal si nécessaire et routez `/api/ws` avec les en-têtes WebSocket.
 
 Exemple Nginx (production, serveur unique UI+API sur 8000):
 ```
@@ -165,7 +158,25 @@ server {
 
 Notes:
 - En production, ne servez pas le bundle UI directement depuis Nginx; laissez le serveur FastAPI monter `ui/dist` et gérez un seul port.
-- Si vous séparez UI et API en dev, utilisez le proxy Vite (`/api` → `http://localhost:8000`).
+
+Exemple Caddy (production, serveur unique UI+API sur 8000):
+```
+erpnext.remcorp.fr {
+	reverse_proxy 127.0.0.1:8000 {
+		header_up Host {host}
+		header_up X-Real-IP {remote}
+		header_up X-Forwarded-For {remote}
+	}
+
+	@ws {
+		path /api/ws*
+	}
+	reverse_proxy @ws 127.0.0.1:8000 {
+		header_up Connection {header.Connection}
+		header_up Upgrade {header.Upgrade}
+	}
+}
+```
 
 ### Problèmes fréquents et correctifs
 - Login UI impossible:
@@ -188,7 +199,6 @@ Notes:
 ### Variables utiles (récap)
 - Serveur (`/opt/orchestrator/.env`): `SERVER_PSK`, `UI_USER`, `UI_PASSWORD` ou `UI_PASSWORD_HASH`, `JWT_SECRET`, `HOST`
 - Agent (avant install): `AGENT_ID`, `SERVER_URL`, `AGENT_PSK`
-- UI dev (`ui/.env`): `ALLOWED_HOSTS=erpnext.remcorp.fr,localhost`
 
 ## Déploiement via systemd (Linux)
 

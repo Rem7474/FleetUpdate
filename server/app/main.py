@@ -36,6 +36,18 @@ if os.path.isdir(ui_dist_path):
 
 @app.on_event("startup")
 def _startup():
+    # Basic production readiness checks
+    missing = []
+    if not settings.server_psk:
+        missing.append("SERVER_PSK")
+    if not settings.jwt_secret:
+        missing.append("JWT_SECRET")
+    if not settings.ui_user:
+        missing.append("UI_USER")
+    if not (settings.ui_password or settings.ui_password_hash):
+        missing.append("UI_PASSWORD/UI_PASSWORD_HASH")
+    if missing:
+        raise RuntimeError(f"Missing required environment/config for production: {', '.join(missing)}")
     init_db()
 
 
