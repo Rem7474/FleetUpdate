@@ -323,17 +323,33 @@ async def stream_command(command_id: str, user: str = Depends(require_user)):
 
     async def event_gen():
         # send existing output first
-        with Session(engine) as session:
-            cmd = session.exec(select(Command).where(Command.command_id == command_id)).first()
-            if cmd and cmd.output:
-                for line in cmd.output.splitlines(True):
-                    yield f"data: {line}\n\n"
-        # then live chunks
+        try:
+            with Session(engine) as session:
+                cmd = session.exec(select(Command).where(Command.command_id == command_id)).first()
+                if cmd and cmd.output:
+                    for line in cmd.output.splitlines(True):
+                        yield f"data: {line}\n\n"
+        except Exception as e:
+            yield f"event: error\ndata: init error: {e}\n\n"
+        # then live chunks with keepalive comments every 15s
+        last_ping = asyncio.get_event_loop().time()
         while True:
-            chunk = await queue.get()
-            yield f"data: {chunk}\n\n"
+            try:
+                # small timeout to allow periodic keepalive
+                chunk = await asyncio.wait_for(queue.get(), timeout=15.0)
+                yield f"data: {chunk}\n\n"
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+                # continue loop
+            except Exception as e:
+                yield f"event: error\ndata: stream error: {e}\n\n"
 
-    return StreamingResponse(event_gen(), media_type="text/event-stream")
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+    }
+    return StreamingResponse(event_gen(), media_type="text/event-stream", headers=headers)
 
 
 # --------- WebSocket push ---------

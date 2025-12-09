@@ -52,6 +52,18 @@ Sudoers pour upgrade OS sur agents (exemple):
 orchestrator ALL=(root) NOPASSWD:/usr/bin/apt
 ```
 
+Pour créer une règle dédiée avec `visudo` (recommandé):
+
+```bash
+sudo visudo -f /etc/sudoers.d/orchestrator
+```
+
+Puis ajoutez la ligne suivante dans l'éditeur qui s'ouvre:
+
+```
+orchestrator ALL=(root) NOPASSWD:/usr/bin/apt
+```
+
 ## Fonctionnalités clés (implémentées)
 - Dashboard: statut OS (nombre de MAJ), badge sudo, filtres Tous/Obsolètes, recherche, actions Sudo check/Upgrade.
 - VM détail: terminal temps réel (SSE) pour upgrade + alerte sudoers.
