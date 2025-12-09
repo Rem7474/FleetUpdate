@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Header, HTTPException, Request, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 import os
@@ -29,11 +29,8 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-# Serve built UI (single-port) if available
-ui_dist_path = os.path.join(os.path.dirname(__file__), "..", "..", "ui", "dist")
-ui_dist_path = os.path.abspath(ui_dist_path)
-if os.path.isdir(ui_dist_path):
-    app.mount("/", StaticFiles(directory=ui_dist_path, html=True), name="ui")
+# Note: Static UI mount is added at the end of this file to avoid
+# intercepting API routes (e.g., POST /api/auth/login) with a 405.
 
 
 @app.on_event("startup")
@@ -405,3 +402,27 @@ def drift(user: str = Depends(require_user)):
                     drift_items.append({"app": name, "expected": t, "actual": av})
             res["drift"].append({"agent": a.id, "group": group, "items": drift_items})
     return res
+
+# ---- Serve UI without intercepting API/WS: assets mount + SPA fallback ----
+ui_dist_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "ui", "dist"))
+if os.path.isdir(ui_dist_path):
+    assets_dir = os.path.join(ui_dist_path, "assets")
+    if os.path.isdir(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    index_html = os.path.join(ui_dist_path, "index.html")
+
+    @app.get("/", include_in_schema=False)
+    def serve_index_root():
+        if os.path.isfile(index_html):
+            return FileResponse(index_html)
+        raise HTTPException(status_code=404, detail="UI not built")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa_fallback(full_path: str):
+        # Do not swallow API or WebSocket paths; only serve SPA for others
+        if full_path.startswith("api/") or full_path.startswith("ws"):
+            raise HTTPException(status_code=404)
+        if os.path.isfile(index_html):
+            return FileResponse(index_html)
+        raise HTTPException(status_code=404, detail="UI not built")

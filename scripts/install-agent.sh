@@ -59,7 +59,10 @@ install_prereqs() {
 
 ensure_user() {
   if ! id -u "$APP_USER" >/dev/null 2>&1; then
-    useradd --system --create-home --home-dir "$APP_HOME" --shell /usr/sbin/nologin "$APP_USER" >/dev/null 2>&1 || true
+    if ! getent group "$APP_GROUP" >/dev/null 2>&1; then
+      groupadd --system "$APP_GROUP" >/dev/null 2>&1 || true
+    fi
+    useradd --system --create-home --home-dir "$APP_HOME" --shell /usr/sbin/nologin -g "$APP_GROUP" "$APP_USER" >/dev/null 2>&1 || true
   fi
   mkdir -p "$APP_HOME"
   chown -R "$APP_USER:$APP_GROUP" "$APP_HOME" >/dev/null 2>&1 || true
@@ -76,48 +79,41 @@ clean_app_home() {
 deploy_repo() {
   echo "Deploying repository from $REPO_URL to $APP_HOME ..."
   mkdir -p "$APP_HOME"
+
+  # Always use the canonical main branch
+  local DEFAULT_BRANCH
+  DEFAULT_BRANCH="main"
+
+  # Preflight git access (preserve proxy env, but set HOME to app home)
+  echo "Preflight: checking git access to $REPO_URL ..."
+  if ! sudo -E -u "$APP_USER" env HOME="$APP_HOME" XDG_CONFIG_HOME="$APP_HOME/.config" bash -lc "git ls-remote '$REPO_URL' HEAD >/dev/null"; then
+    echo "Error: cannot access $REPO_URL via git. Verify network/proxy and CA certificates." >&2
+    exit 1
+  fi
+
   if [ -d "$APP_HOME/.git" ]; then
-    echo "Repo exists in $APP_HOME, ensuring correct remote and pulling latest..."
-    echo "Running: git -C '$APP_HOME' remote set-url origin '$REPO_URL'"
-    git -C "$APP_HOME" remote set-url origin "$REPO_URL" || true
-    echo "Running: git -C '$APP_HOME' fetch --prune --tags"
-    if ! git -C "$APP_HOME" fetch --prune --tags; then
-      echo "Warning: git fetch failed; attempting full reclone..." >&2
-      git --version || true
-      echo "Remote URL: $REPO_URL" >&2
-      echo "Testing connectivity with: git ls-remote $REPO_URL" >&2
-      GIT_TRACE=1 GIT_CURL_VERBOSE=1 git ls-remote "$REPO_URL" || true
-      echo "Directory perms:" >&2; ls -ld "$APP_HOME" || true
-      echo "Disk space:" >&2; df -h "$APP_HOME" || true
+    echo "Existing git repo detected; updating..."
+    sudo -E -u "$APP_USER" env HOME="$APP_HOME" XDG_CONFIG_HOME="$APP_HOME/.config" bash -lc "git config --global --add safe.directory '$APP_HOME'" || true
+    sudo -E -u "$APP_USER" env HOME="$APP_HOME" XDG_CONFIG_HOME="$APP_HOME/.config" bash -lc "git -C '$APP_HOME' remote set-url origin '$REPO_URL'" || true
+    if ! sudo -E -u "$APP_USER" env HOME="$APP_HOME" XDG_CONFIG_HOME="$APP_HOME/.config" bash -lc "git -C '$APP_HOME' fetch --prune --tags"; then
+      echo "git fetch failed; attempting full reclone..." >&2
       clean_app_home
-      echo "Running: git clone --depth=1 '$REPO_URL' '$APP_HOME'"
-      git clone --depth=1 "$REPO_URL" "$APP_HOME" || { echo "Error: git clone failed" >&2; exit 1; }
+      sudo -E -u "$APP_USER" env HOME="$APP_HOME" XDG_CONFIG_HOME="$APP_HOME/.config" bash -lc "git clone --depth=1 --branch '$DEFAULT_BRANCH' '$REPO_URL' '$APP_HOME'" || { echo "Error: git clone failed" >&2; exit 1; }
     else
-      DEFAULT_BRANCH=$(git -C "$APP_HOME" remote show origin 2>/dev/null | awk '/HEAD branch/ {print $NF}')
-      DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
-      if ! git -C "$APP_HOME" rev-parse --verify "$DEFAULT_BRANCH" >/dev/null 2>&1; then
-        echo "Running: git -C '$APP_HOME' checkout -b '$DEFAULT_BRANCH' 'origin/$DEFAULT_BRANCH'"
-        git -C "$APP_HOME" checkout -b "$DEFAULT_BRANCH" "origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || true
-      else
-        echo "Running: git -C '$APP_HOME' checkout '$DEFAULT_BRANCH'"
-        git -C "$APP_HOME" checkout "$DEFAULT_BRANCH" >/dev/null 2>&1 || true
-      fi
-      echo "Running: git -C '$APP_HOME' reset --hard 'origin/$DEFAULT_BRANCH' || git -C '$APP_HOME' pull --ff-only origin '$DEFAULT_BRANCH'"
-      git -C "$APP_HOME" reset --hard "origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || \
-      git -C "$APP_HOME" pull --ff-only origin "$DEFAULT_BRANCH" >/dev/null 2>&1 || {
-        echo "Warning: git reset/pull failed; attempting reclone..." >&2
+      sudo -E -u "$APP_USER" env HOME="$APP_HOME" XDG_CONFIG_HOME="$APP_HOME/.config" bash -lc "git -C '$APP_HOME' checkout -B '$DEFAULT_BRANCH' 'origin/$DEFAULT_BRANCH'" || true
+      if ! sudo -E -u "$APP_USER" env HOME="$APP_HOME" XDG_CONFIG_HOME="$APP_HOME/.config" bash -lc "git -C '$APP_HOME' reset --hard 'origin/$DEFAULT_BRANCH'"; then
+        echo "git reset failed; attempting reclone..." >&2
         clean_app_home
-        echo "Running: git clone --depth=1 '$REPO_URL' '$APP_HOME'"
-        git clone --depth=1 "$REPO_URL" "$APP_HOME" || { echo "Error: git clone failed" >&2; exit 1; }
-      }
+        sudo -E -u "$APP_USER" env HOME="$APP_HOME" XDG_CONFIG_HOME="$APP_HOME/.config" bash -lc "git clone --depth=1 --branch '$DEFAULT_BRANCH' '$REPO_URL' '$APP_HOME'" || { echo "Error: git clone failed" >&2; exit 1; }
+      fi
     fi
   else
     if [ -n "$(ls -A "$APP_HOME" 2>/dev/null || true)" ]; then
       echo "Non-git contents detected in $APP_HOME; cleaning before clone..."
       clean_app_home
     fi
-    echo "Running: git clone --depth=1 '$REPO_URL' '$APP_HOME'"
-    git clone --depth=1 "$REPO_URL" "$APP_HOME" || { echo "Error: git clone failed" >&2; exit 1; }
+    sudo -E -u "$APP_USER" env HOME="$APP_HOME" XDG_CONFIG_HOME="$APP_HOME/.config" bash -lc "git config --global --add safe.directory '$APP_HOME'" || true
+    sudo -E -u "$APP_USER" env HOME="$APP_HOME" XDG_CONFIG_HOME="$APP_HOME/.config" bash -lc "git clone --depth=1 --branch '$DEFAULT_BRANCH' '$REPO_URL' '$APP_HOME'" || { echo "Error: git clone failed" >&2; exit 1; }
   fi
   chown -R "$APP_USER:$APP_GROUP" "$APP_HOME" >/dev/null 2>&1 || true
 }
