@@ -77,8 +77,8 @@ async def execute_command(client: httpx.AsyncClient, settings: AgentSettings, cm
     # If no commands provided but a known command type exists
     if not commands and cmd.get("command") == "apt_upgrade":
         commands = [
-            "sudo apt update",
-            "sudo DEBIAN_FRONTEND=noninteractive apt -y upgrade",
+            "sudo -n apt update",
+            "sudo -n apt -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade",
         ]
     elif not commands and cmd.get("command") == "sudo_check":
         commands = [
