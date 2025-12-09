@@ -67,8 +67,7 @@ async def main():
             await asyncio.sleep(settings.poll_interval)
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+ 
 
 
 async def execute_command(client: httpx.AsyncClient, settings: AgentSettings, cmd: dict):
@@ -120,3 +119,6 @@ async def execute_command(client: httpx.AsyncClient, settings: AgentSettings, cm
     body = json.dumps(result_payload).encode("utf-8")
     s = sign_bytes(body, settings.psk)
     await client.post(settings.server_url.rstrip("/") + "/api/command-result", content=body, headers={"Content-Type":"application/json","X-Agent-Id": settings.id, "X-Signature": s}, timeout=60)
+
+if __name__ == "__main__":
+    asyncio.run(main())
