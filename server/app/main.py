@@ -190,39 +190,47 @@ async def heartbeat(
 
     try:
         payload = HeartbeatPayload.model_validate_json(raw)
-    except Exception:
+    except Exception as e:
+        # Log and reject invalid payloads
+        print(f"heartbeat validation error: {e}")
         raise HTTPException(status_code=400, detail="Invalid payload")
 
     if payload.agent_id != x_agent_id:
         raise HTTPException(status_code=400, detail="Agent ID mismatch")
 
-    with Session(engine) as session:
-        agent = session.get(Agent, payload.agent_id)
-        if not agent:
-            agent = Agent(id=payload.agent_id)
-        agent.last_seen = datetime.utcnow()
-        agent.status = "online"
-        agent.apps_state = json.dumps({k: v.model_dump() for k, v in payload.apps.items()})
-        # optionally parse os_update if the client sent it
-        try:
-            body = json.loads(raw)
+    # Parse optional extra fields from body (ignored by schema)
+    body: dict[str, Any] = {}
+    try:
+        body = json.loads(raw)
+    except Exception:
+        body = {}
+
+    try:
+        with Session(engine) as session:
+            agent = session.get(Agent, payload.agent_id)
+            if not agent:
+                agent = Agent(id=payload.agent_id)
+            agent.last_seen = datetime.utcnow()
+            agent.status = "online"
+            agent.apps_state = json.dumps({k: v.model_dump() for k, v in payload.apps.items()})
             if "os_update" in body:
-                agent.os_update = json.dumps(body["os_update"]) if body["os_update"] is not None else None
-        except Exception:
-            pass
-        session.add(agent)
-        session.commit()
-    # broadcast agent update over WebSocket
-    await ws_broadcast({
-        "type": "agent_update",
-        "agent": {
-            "id": payload.agent_id,
-            "last_seen": datetime.utcnow().isoformat(),
-            "status": "online",
-            "apps_state": {k: v.model_dump() for k, v in payload.apps.items()},
-            "os_update": json.loads(agent.os_update) if agent.os_update else None,
-        }
-    })
+                agent.os_update = json.dumps(body.get("os_update")) if body.get("os_update") is not None else None
+            session.add(agent)
+            session.commit()
+        await ws_broadcast({
+            "type": "agent_update",
+            "agent": {
+                "id": payload.agent_id,
+                "last_seen": datetime.utcnow().isoformat(),
+                "status": "online",
+                "apps_state": {k: v.model_dump() for k, v in payload.apps.items()},
+                "os_update": body.get("os_update") if body.get("os_update") is not None else (json.loads(agent.os_update) if agent.os_update else None),
+            }
+        })
+    except Exception as e:
+        print(f"heartbeat processing error: {e}")
+        raise HTTPException(status_code=500, detail="Heartbeat processing failed")
+
     return {"status": "ok"}
 
 

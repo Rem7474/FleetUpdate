@@ -1,8 +1,12 @@
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
+from pydantic import BaseModel
+from pydantic import ConfigDict
+from pydantic import Field
 
 
 class HeartbeatApp(BaseModel):
+    model_config = ConfigDict(extra='ignore')
     type: Optional[str] = None
     branch: Optional[str] = None
     current: Optional[str] = None
@@ -12,8 +16,9 @@ class HeartbeatApp(BaseModel):
 
 
 class HeartbeatPayload(BaseModel):
+    model_config = ConfigDict(extra='ignore')
     agent_id: str
-    apps: Dict[str, HeartbeatApp] = {}
+    apps: Dict[str, HeartbeatApp] = Field(default_factory=dict)
     logs: Optional[List[str]] = None
 
 
